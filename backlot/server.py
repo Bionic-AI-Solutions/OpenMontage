@@ -14,7 +14,7 @@ import time
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, UploadFile, File
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -24,6 +24,10 @@ from lib.board_bus import append_inbox, validate_message
 UI_DIR = Path(__file__).resolve().parent / "ui"
 THUMB_CACHE_DIR = REPO_ROOT / ".backlot" / "thumbs"
 THUMB_WIDTHS = (320, 640, 960)
+
+ALLOWED_UPLOAD_EXT = {".png", ".jpg", ".jpeg", ".webp", ".gif",
+                      ".mp4", ".webm", ".mov", ".mp3", ".wav", ".m4a"}
+MAX_UPLOAD_BYTES = 200 * 1024 * 1024
 
 # Paths inside a project whose changes are pure noise for the board.
 _IGNORE_PARTS = {"node_modules", ".git", "__pycache__", ".cache"}
@@ -249,6 +253,23 @@ def create_app() -> FastAPI:
         if error:
             raise HTTPException(status_code=400, detail=error)
         return await asyncio.to_thread(append_inbox, project_dir, payload)
+
+    @app.post("/api/project/{project_id}/upload")
+    async def post_upload(project_id: str, file: UploadFile = File(...)) -> dict:
+        project_dir = _safe_project_dir(project_id)
+        suffix = Path(file.filename or "").suffix.lower()
+        if suffix not in ALLOWED_UPLOAD_EXT:
+            raise HTTPException(status_code=400, detail=f"extension not allowed: {suffix or '(none)'}")
+        data = await file.read()
+        if len(data) > MAX_UPLOAD_BYTES:
+            raise HTTPException(status_code=413, detail="file too large")
+        import re as _re, uuid as _uuid
+        stem = _re.sub(r"[^A-Za-z0-9._-]", "_", Path(file.filename or "upload").stem)[:60]
+        name = f"{stem}-{_uuid.uuid4().hex[:6]}{suffix}"
+        dest_dir = project_dir / "uploads"
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        (dest_dir / name).write_bytes(data)
+        return {"path": f"uploads/{name}"}
 
     # ---- Thumbnails (downscaled, cached on disk) ------------------------
 

@@ -252,3 +252,40 @@ def test_server_never_writes_checkpoints(client, projects_root):
                 json={"stage": "script", "type": "action", "action": "approve",
                       "artifact_version": 1})
     assert (project / "checkpoint_script.json").read_text() == before
+
+
+# ---- upload (replacement media) ------------------------------------------
+
+def test_upload_saves_media_file(client, projects_root):
+    _make_project(projects_root)
+    res = client.post("/api/project/film/upload",
+                      files={"file": ("swap.png", b"\x89PNG fake", "image/png")})
+    assert res.status_code == 200
+    rel = res.json()["path"]
+    assert rel.startswith("uploads/") and rel.endswith(".png")
+    assert (projects_root / "film" / rel).read_bytes() == b"\x89PNG fake"
+
+
+def test_upload_rejects_disallowed_extension(client, projects_root):
+    _make_project(projects_root)
+    res = client.post("/api/project/film/upload",
+                      files={"file": ("evil.py", b"print(1)", "text/x-python")})
+    assert res.status_code == 400
+
+
+def test_upload_rejects_oversize(client, projects_root, monkeypatch):
+    _make_project(projects_root)
+    monkeypatch.setattr(server_mod, "MAX_UPLOAD_BYTES", 10)
+    res = client.post("/api/project/film/upload",
+                      files={"file": ("big.png", b"x" * 11, "image/png")})
+    assert res.status_code == 413
+
+
+def test_upload_sanitizes_traversal_names(client, projects_root):
+    _make_project(projects_root)
+    res = client.post("/api/project/film/upload",
+                      files={"file": ("../../etc/passwd.png", b"x", "image/png")})
+    assert res.status_code == 200
+    saved = res.json()["path"]
+    target = (projects_root / "film" / saved).resolve()
+    assert (projects_root / "film" / "uploads").resolve() in target.parents
