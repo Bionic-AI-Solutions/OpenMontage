@@ -325,6 +325,13 @@ function renderDrawer(s) {
 // script card
 // ---------------------------------------------------------------------------
 
+function editScriptLine(stageName, section) {
+  const next = prompt("Edit narration line:", section.text || "");
+  if (next === null || next.trim() === "" || next === section.text) return;
+  postInbox({ stage: stageName, type: "action", action: "edit_script_line",
+    line_id: section.id, new_text: next.trim() });
+}
+
 function scriptSections(script, limit) {
   const sections = script.sections || [];
   const shown = limit ? sections.slice(0, limit) : sections;
@@ -332,7 +339,10 @@ function scriptSections(script, limit) {
   for (const sec of shown) {
     nodes.push(el("div", { class: "sp-slug" },
       `${(sec.id || "").toUpperCase()} — ${sec.label || "Section"} `,
-      el("span", { class: "tc" }, `${fmtDuration(sec.start_seconds)} – ${fmtDuration(sec.end_seconds)}`)));
+      el("span", { class: "tc" }, `${fmtDuration(sec.start_seconds)} – ${fmtDuration(sec.end_seconds)}`),
+      el("button", { class: "line-edit", title: "Edit line", onclick: (e) => {
+        e.stopPropagation(); editScriptLine("script", sec);
+      } }, "✎")));
     if (sec.text) nodes.push(el("div", { class: "sp-action" }, sec.text));
     if (sec.speaker_directions) nodes.push(el("div", { class: "sp-paren" }, `(${sec.speaker_directions})`));
     const cues = sec.enhancement_cues || [];
@@ -651,6 +661,27 @@ modal.addEventListener("click", (e) => { if (e.target === modal) closeModal(); }
 // right rail: decisions, activity
 // ---------------------------------------------------------------------------
 
+function decisionOverrideControl(entry) {
+  const options = (entry.options_considered || [])
+    .map((o) => (typeof o === "string" ? o : o.option || o.name))
+    .filter(Boolean);
+  if (!options.length) return null;
+  return el("select", {
+    class: "decision-override",
+    onchange: (e) => {
+      const chosen = e.target.value;
+      if (!chosen || chosen === "__label") return;
+      if (confirm(`Change "${entry.subject}" to ${chosen}?`)) {
+        postInbox({ stage: entry.stage || "proposal", type: "action",
+          action: "override_decision", category: entry.category,
+          subject: entry.subject, chosen_option: chosen });
+      }
+      e.target.value = "__label";
+    },
+  }, el("option", { value: "__label" }, "change…"),
+     ...options.map((o) => el("option", { value: o }, o)));
+}
+
 function renderDecisions(s) {
   const log = s.artifacts.decision_log;
   const decisions = (log && log.decisions) || [];
@@ -677,7 +708,8 @@ function renderDecisions(s) {
     body.append(el("div", { class: "decision" },
       el("div", { class: "d-cat" }, `${d.category || "decision"}${d.confidence ? ` · ${d.confidence}` : ""}`,
         revised ? el("span", { class: "d-revised" }, " · revised") : null),
-      el("div", { class: "d-pick" }, `${d.subject || ""} `, el("span", { class: "arrow" }, "→"), ` ${selLabel}`),
+      el("div", { class: "d-pick" }, `${d.subject || ""} `, el("span", { class: "arrow" }, "→"), ` ${selLabel}`,
+        decisionOverrideControl(d)),
       d.reason ? el("div", { class: "d-why" }, d.reason) : null,
       alts.length ? el("div", { class: "d-alt" }, "also considered: ",
         alts.slice(0, 3).map((o, i) => [i ? " · " : "", el("s", {}, o.label || o.option_id)]).flat()) : null,
@@ -741,6 +773,47 @@ function renderActivity(s) {
 // ---------------------------------------------------------------------------
 // storyboard filmstrip
 // ---------------------------------------------------------------------------
+
+function sceneQuickActions(card) {
+  const stage = "assets";
+  return el("div", { class: "scene-actions" },
+    el("button", { title: "Note for this scene", onclick: () => {
+      const note = prompt(`Note for scene ${card.id}:`);
+      if (note) postInbox({ stage, type: "action", action: "scene_note",
+        scene_id: card.id, note });
+    }}, "🗒"),
+    el("button", { title: "Regenerate visual", onclick: () => {
+      const note = prompt("Optional guidance for the regeneration:") || undefined;
+      postInbox({ stage, type: "action", action: "regenerate_asset",
+        target: { scene_id: card.id, asset: "visual" }, note });
+    }}, "↺"),
+    el("button", { title: "Try a different provider", onclick: () => {
+      postInbox({ stage, type: "action", action: "swap_provider",
+        target: { scene_id: card.id, asset: "visual" } });
+    }}, "⇄"),
+    el("button", { title: "Drop this scene", onclick: () => {
+      if (confirm(`Drop scene ${card.id}?`))
+        postInbox({ stage: "scene_plan", type: "action", action: "drop_scene",
+          scene_id: card.id });
+    }}, "🗑"),
+    el("button", { title: "Replace with your own file", onclick: async () => {
+      const input = document.createElement("input");
+      input.type = "file";
+      input.onchange = async () => {
+        const file = input.files[0];
+        if (!file) return;
+        const form = new FormData();
+        form.append("file", file);
+        const res = await fetch(`/api/project/${encodedProjectId}/upload`,
+          { method: "POST", body: form });
+        if (!res.ok) { alert("Upload failed"); return; }
+        const { path } = await res.json();
+        postInbox({ stage, type: "action", action: "replace_asset",
+          target: { scene_id: card.id, asset: "visual" }, path });
+      };
+      input.click();
+    }}, "⤴"));
+}
 
 function sceneLabel(id) {
   // "sc4" → "SC 04", "scene-11" → "SC 11", anything else → uppercased id
@@ -878,6 +951,7 @@ function sceneCard(s, card) {
     };
     wrap.append(wave);
   }
+  wrap.append(sceneQuickActions(card));
   return wrap;
 }
 

@@ -1057,3 +1057,9 @@ body:not(.first) .approval-review { animation: none; }
 .chat-composer { display: flex; gap: 6px; margin-top: 8px; }
 .chat-composer input { flex: 1; background: rgba(255,255,255,.06); border: 1px solid var(--line, #333); border-radius: 6px; padding: 7px 9px; color: inherit; }
 .chat-composer button { border: 1px solid var(--line, #333); background: transparent; color: inherit; border-radius: 6px; padding: 7px 10px; cursor: pointer; }
+
+/* ---- quick-action controls (interactive board) ---- */
+.scene-actions { display: flex; gap: 4px; margin-top: 4px; }
+.scene-actions button, .line-edit { background: transparent; border: 1px solid var(--line, #333); border-radius: 4px; color: inherit; cursor: pointer; font-size: 11px; padding: 2px 6px; opacity: .7; }
+.scene-actions button:hover, .line-edit:hover { opacity: 1; }
+.decision-override { margin-left: 6px; font-size: 11px; background: transparent; color: inherit; border: 1px solid var(--line, #333); border-radius: 4px; }
