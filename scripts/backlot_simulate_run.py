@@ -10,8 +10,9 @@ Also useful as a demo driver.
 
 --fast         compresses waits to ~0.3s (for automated verification)
 --cleanup      removes the project directory at the end
---interactive  hold the assets gate for a real board Proceed click instead
-               of auto-approving (requires `python -m backlot serve` running)
+--interactive  hold every awaiting_human gate (script, scene_plan, assets)
+               for a real board Proceed click instead of auto-approving
+               (requires `python -m backlot serve` running)
 """
 
 from __future__ import annotations
@@ -34,6 +35,48 @@ SCENES = [
     ("sc3", "A storm builds offshore", 9, 15, "Until the night the light went out."),
     ("sc4", "The keeper climbs the stairs", 15, 21, "Someone still has to climb."),
 ]
+
+
+def _hold_gate(project_dir: Path, stage: str) -> bool:
+    """Hold an awaiting_human gate for a real board Proceed click.
+
+    Posts the gate-presentation chat message, blocks on the stage inbox
+    until an approve action arrives (or the hold times out), and returns
+    whether it was approved. Used for every awaiting_human -> completed
+    transition in --interactive mode (script, scene_plan, assets) so the
+    sim holds at the FIRST gate, not just the last one.
+    """
+    from lib.board_bus import append_chat, read_inbox, touch_heartbeat
+    from lib.live_gate import read_inbox_cursor
+
+    append_chat(project_dir, stage, "agent",
+                f"[sim] {stage} ready — click Proceed on the board.",
+                extra={"kind": "gate_presentation", "artifact_version": 1})
+    print(f"[sim] holding {stage} gate — click Proceed on the board…")
+
+    # The inbox is a single shared file across all stages and the cursor is
+    # never persisted back to the checkpoint, so messages left over from an
+    # earlier stage's approval are still "unprocessed" here. Poll and
+    # advance a local cursor past them instead of stopping on the first
+    # batch (which would otherwise make this gate give up immediately on
+    # a stale, wrong-stage message) — only a matching-stage approve ends
+    # the hold.
+    cursor = read_inbox_cursor(project_dir, stage)
+    deadline = time.monotonic() + 600
+    last_beat = 0.0
+    while True:
+        now = time.monotonic()
+        if now - last_beat >= 15.0:
+            touch_heartbeat(project_dir)
+            last_beat = now
+        msgs = read_inbox(project_dir, cursor=cursor)
+        if msgs:
+            cursor = {"id": msgs[-1].get("id"), "ts": msgs[-1].get("ts")}
+            if any(m.get("action") == "approve" and m.get("stage") == stage for m in msgs):
+                return True
+        if now >= deadline:
+            return False
+        time.sleep(min(1.0, max(0.01, deadline - now)))
 
 
 def artifacts_for(project_id: str) -> dict:
@@ -67,7 +110,7 @@ def main() -> int:
     parser.add_argument("--fast", action="store_true")
     parser.add_argument("--cleanup", action="store_true")
     parser.add_argument("--interactive", action="store_true",
-                        help="hold real gates: wait for board Proceed clicks instead of auto-approving")
+                        help="hold every awaiting_human gate: wait for board Proceed clicks instead of auto-approving")
     args = parser.parse_args()
 
     wait = 0.3 if args.fast else 2.5
@@ -104,14 +147,24 @@ def main() -> int:
     cp("script", "awaiting_human", {"script": art["script"]},
        review={"round": 1, "decision": "pass", "critical": 0, "suggestions": 1,
                "nitpicks": 0, "summary": "Hook is strong; tightened s3."})
-    time.sleep(wait)  # "user reads the script on the board"
+    if args.interactive:
+        if not _hold_gate(pdir, "script"):
+            print("[sim] no approval — stopping at script")
+            return 1
+    else:
+        time.sleep(wait)  # "user reads the script on the board"
     cp("script", "completed", {"script": art["script"]}, human_approved=True)
 
     # scene_plan gates too
     cp("scene_plan", "in_progress", {})
     save_artifact("scene_plan", art["scene_plan"])
     cp("scene_plan", "awaiting_human", {"scene_plan": art["scene_plan"]})
-    time.sleep(wait)
+    if args.interactive:
+        if not _hold_gate(pdir, "scene_plan"):
+            print("[sim] no approval — stopping at scene_plan")
+            return 1
+    else:
+        time.sleep(wait)
     cp("scene_plan", "completed", {"scene_plan": art["scene_plan"]}, human_approved=True)
 
     # assets: per-scene tool events + growing manifest + partial progress
@@ -152,16 +205,7 @@ def main() -> int:
                       "total_reserved_usd": 0.0,
                       "budget_remaining_usd": 5 - manifest["total_cost_usd"]})
     if args.interactive:
-        from lib.board_bus import append_chat
-        from lib.live_gate import wait_for_messages, read_inbox_cursor
-        append_chat(pdir, "assets", "agent",
-                    "[sim] assets ready — click Proceed on the board.",
-                    extra={"kind": "gate_presentation", "artifact_version": 1})
-        print("[sim] holding assets gate — click Proceed on the board…")
-        msgs = wait_for_messages(pdir, cursor=read_inbox_cursor(pdir, "assets"),
-                                 timeout_seconds=600, poll_seconds=1.0)
-        approved = any(m.get("action") == "approve" for m in msgs)
-        if not approved:
+        if not _hold_gate(pdir, "assets"):
             print("[sim] no approval — stopping at assets")
             return 1
     else:
