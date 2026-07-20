@@ -166,6 +166,64 @@ When `human_approval_default: true`:
    stage — it runs only after the assets gate is approved. Rendering a full
    draft inside the assets stage jumps the gate the user is meant to hold.
 
+### Step 5b: Live Gate — Board-Attached Holding (Preferred When Backlot Is Running)
+
+When the Backlot server is reachable, do not end your turn at a gate.
+Instead, HOLD the gate so the user can act from the board:
+
+1. Write the `awaiting_human` checkpoint as usual.
+2. Write your gate presentation to the stage chat:
+   ```python
+   from lib.board_bus import append_chat
+   append_chat(project_dir, stage, "agent", presentation_text,
+               extra={"kind": "gate_presentation",
+                      "artifact_version": artifact_version})
+   ```
+   `artifact_version` = the stage's archived-checkpoint count in
+   `projects/<id>/history/` + 1.
+3. Hold with the blocking helper (cheap file poll — never a token loop):
+   ```python
+   from lib.live_gate import wait_for_messages, read_inbox_cursor, cursor_for
+   cursor = read_inbox_cursor(project_dir, stage)
+   messages = wait_for_messages(project_dir, cursor=cursor,
+                                timeout_seconds=1800)
+   ```
+4. Dispatch each returned message IN ORDER; after each one, re-write the
+   checkpoint with `metadata.inbox_cursor = cursor_for(message)`:
+   - `action: approve` — consume ONLY if its `artifact_version` matches the
+     currently presented version; then re-write the checkpoint
+     `completed`/`human_approved=True` and advance. On mismatch, reply in
+     chat asking to confirm against the new version, and keep holding.
+   - `action: abort` — stop the pipeline; final chat message states where
+     things stand.
+   - Structured tweak (`edit_script_line`, `scene_note`, `reorder_scenes`,
+     `drop_scene`, `regenerate_asset`, `swap_provider`, `replace_asset`,
+     `override_decision`) — apply to the artifact, validate against
+     `schemas/artifacts/`, append a `decision_log` entry when it changes a
+     logged decision (same `(category, subject)` re-log rule), confirm in
+     chat, RE-PRESENT the gate (version increments). A tweak never implies
+     approval.
+   - `chat` — treat exactly like a typed terminal reply: interpret with
+     stage context, revise per the stage director skill if asked,
+     re-review, re-present. Always answer in the stage chat.
+   - A message for a DIFFERENT stage than the held one: acknowledge in
+     that stage's chat; if it requires rewinding past completed stages,
+     quantify the rework and cost and ask for confirmation first.
+5. Messages echoed as quick-actions in the UI already appear in the chat
+   thread; your replies always go through `append_chat` — never only to
+   the terminal.
+6. Terminal replies still win: if the user types in chat while you hold,
+   process that input and stop polling. Both channels are equivalent and
+   both are audited.
+7. On timeout (default 30 min): post "still waiting — I'll apply your
+   board actions next session" to the stage chat, END YOUR TURN cleanly.
+   The resume protocol (Step 7) MUST drain unprocessed inbox messages
+   (from `metadata.inbox_cursor`) BEFORE re-presenting the gate.
+
+The Backlot server writes ONLY `inbox/` and `uploads/`. You remain the
+sole writer of checkpoints, artifacts, and chat. A [Proceed] click never
+flips a checkpoint by itself — you convert it.
+
 ### Step 6: Determine Next Stage
 
 After checkpoint is written and approved (if needed):
