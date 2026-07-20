@@ -203,3 +203,52 @@ class TestFindingsFixes:
         fake_video.write_bytes(b"\x00" * 4096)
         res = client.get("/thumb/vid/renders/final.mp4")
         assert res.status_code == 404  # never the raw video bytes (F-03)
+
+
+# ---- inbox (interactive board) -------------------------------------------
+
+
+def test_inbox_post_appends_message(client, projects_root):
+    _make_project(projects_root)
+    res = client.post("/api/project/film/inbox",
+                      json={"stage": "script", "type": "chat", "text": "punchier hook"})
+    assert res.status_code == 200
+    body = res.json()
+    assert body["id"].startswith("m-") and body["ts"] > 0
+    stored = (projects_root / "film" / "inbox" / "messages.jsonl").read_text()
+    assert "punchier hook" in stored
+
+
+def test_inbox_post_rejects_invalid_message(client, projects_root):
+    _make_project(projects_root)
+    res = client.post("/api/project/film/inbox",
+                      json={"stage": "script", "type": "action", "action": "self_destruct"})
+    assert res.status_code == 400
+    assert not (projects_root / "film" / "inbox").exists()
+
+
+def test_inbox_post_unknown_project_404(client, projects_root):
+    res = client.post("/api/project/nope/inbox",
+                      json={"stage": "script", "type": "chat", "text": "x"})
+    assert res.status_code == 404
+
+
+def test_inbox_post_approve_requires_artifact_version(client, projects_root):
+    _make_project(projects_root)
+    res = client.post("/api/project/film/inbox",
+                      json={"stage": "script", "type": "action", "action": "approve"})
+    assert res.status_code == 400
+    res = client.post("/api/project/film/inbox",
+                      json={"stage": "script", "type": "action", "action": "approve",
+                            "artifact_version": 1})
+    assert res.status_code == 200
+
+
+def test_server_never_writes_checkpoints(client, projects_root):
+    """Governance: no server route may flip a checkpoint."""
+    project = _make_project(projects_root)
+    before = (project / "checkpoint_script.json").read_text()
+    client.post("/api/project/film/inbox",
+                json={"stage": "script", "type": "action", "action": "approve",
+                      "artifact_version": 1})
+    assert (project / "checkpoint_script.json").read_text() == before

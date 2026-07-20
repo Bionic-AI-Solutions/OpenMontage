@@ -2,7 +2,8 @@
 
 The watcher observes ``projects/`` with watchfiles; on any change it bumps a
 per-project version and wakes SSE subscribers, who tell the browser to
-refetch state. The server never writes to project directories.
+refetch state. The server never writes to project directories, with exactly two carve-outs:
+``inbox/`` (board → agent messages) and ``uploads/`` (replacement media).
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from backlot.state import PROJECTS_DIR, REPO_ROOT, list_projects, load_board_state, summarize_project
+from lib.board_bus import append_inbox, validate_message
 
 UI_DIR = Path(__file__).resolve().parent / "ui"
 THUMB_CACHE_DIR = REPO_ROOT / ".backlot" / "thumbs"
@@ -233,6 +235,20 @@ def create_app() -> FastAPI:
             "Cache-Control": "no-cache",
             "X-Accel-Buffering": "no",
         })
+
+    # ---- Inbox (the board's only general write path) -------------------
+
+    @app.post("/api/project/{project_id}/inbox")
+    async def post_inbox(project_id: str, request: Request) -> dict:
+        project_dir = _safe_project_dir(project_id)
+        try:
+            payload = await request.json()
+        except Exception:
+            raise HTTPException(status_code=400, detail="body must be JSON")
+        error = validate_message(payload)
+        if error:
+            raise HTTPException(status_code=400, detail=error)
+        return await asyncio.to_thread(append_inbox, project_dir, payload)
 
     # ---- Thumbnails (downscaled, cached on disk) ------------------------
 
