@@ -50,8 +50,15 @@ def validate_message(payload: Any) -> Optional[str]:
         if action not in ACTION_FIELDS:
             return f"unknown action: {action!r}"
         for field in ACTION_FIELDS[action]:
-            if payload.get(field) in (None, "", []):
+            if payload.get(field) in (None, "", [], {}):
                 return f"action {action!r} requires '{field}'"
+        if action == "approve":
+            version = payload.get("artifact_version")
+            # bool is a subclass of int in Python — exclude it explicitly so
+            # `artifact_version: true` doesn't sneak past an `isinstance(int)`
+            # check.
+            if isinstance(version, bool) or not isinstance(version, int):
+                return "action 'approve' requires 'artifact_version' to be an integer"
         return None
     return f"unknown type: {mtype!r} (expected 'chat' or 'action')"
 

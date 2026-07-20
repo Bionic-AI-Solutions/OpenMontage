@@ -289,3 +289,129 @@ def test_upload_sanitizes_traversal_names(client, projects_root):
     saved = res.json()["path"]
     target = (projects_root / "film" / saved).resolve()
     assert (projects_root / "film" / "uploads").resolve() in target.parents
+
+
+def test_upload_streams_multi_chunk_file_under_limit(client, projects_root, monkeypatch):
+    """Chunked size check must not reject a file that's larger than one
+    UPLOAD_CHUNK_BYTES chunk but still under MAX_UPLOAD_BYTES."""
+    monkeypatch.setattr(server_mod, "UPLOAD_CHUNK_BYTES", 4)
+    _make_project(projects_root)
+    payload = b"x" * 20
+    res = client.post("/api/project/film/upload",
+                      files={"file": ("multi.png", payload, "image/png")})
+    assert res.status_code == 200
+    rel = res.json()["path"]
+    assert (projects_root / "film" / rel).read_bytes() == payload
+    # No leftover .part temp files.
+    assert not list((projects_root / "film" / "uploads").glob(".*.part"))
+
+
+def test_upload_oversize_leaves_no_partial_file(client, projects_root, monkeypatch):
+    monkeypatch.setattr(server_mod, "MAX_UPLOAD_BYTES", 10)
+    _make_project(projects_root)
+    res = client.post("/api/project/film/upload",
+                      files={"file": ("big.png", b"x" * 11, "image/png")})
+    assert res.status_code == 413
+    uploads_dir = projects_root / "film" / "uploads"
+    assert not uploads_dir.exists() or not list(uploads_dir.iterdir())
+
+
+# ---- CSRF hardening (content-type + origin checks) ------------------------
+
+
+def test_inbox_post_rejects_non_json_content_type(client, projects_root):
+    _make_project(projects_root)
+    res = client.post(
+        "/api/project/film/inbox",
+        content=b"stage=script&type=chat&text=hi",
+        headers={"content-type": "text/plain"},
+    )
+    assert res.status_code == 415
+
+
+def test_inbox_post_rejects_evil_origin(client, projects_root):
+    _make_project(projects_root)
+    res = client.post(
+        "/api/project/film/inbox",
+        json={"stage": "script", "type": "chat", "text": "hi"},
+        headers={"origin": "https://evil.example"},
+    )
+    assert res.status_code == 403
+
+
+def test_inbox_post_accepts_localhost_origin(client, projects_root):
+    _make_project(projects_root)
+    res = client.post(
+        "/api/project/film/inbox",
+        json={"stage": "script", "type": "chat", "text": "hi"},
+        headers={"origin": "http://localhost:4750"},
+    )
+    assert res.status_code == 200
+
+
+def test_upload_rejects_evil_origin(client, projects_root):
+    _make_project(projects_root)
+    res = client.post(
+        "/api/project/film/upload",
+        files={"file": ("swap.png", b"\x89PNG fake", "image/png")},
+        headers={"origin": "https://evil.example"},
+    )
+    assert res.status_code == 403
+
+
+def test_upload_accepts_localhost_origin(client, projects_root):
+    _make_project(projects_root)
+    res = client.post(
+        "/api/project/film/upload",
+        files={"file": ("swap.png", b"\x89PNG fake", "image/png")},
+        headers={"origin": "http://127.0.0.1:4750"},
+    )
+    assert res.status_code == 200
+
+
+def test_inbox_post_no_origin_header_still_works(client, projects_root):
+    """Existing (pre-fix) behavior: no Origin header at all is fine —
+    enforcement only triggers when the header is present and non-local."""
+    _make_project(projects_root)
+    res = client.post("/api/project/film/inbox",
+                      json={"stage": "script", "type": "chat", "text": "still works"})
+    assert res.status_code == 200
+
+
+# ---- validation gap: empty dict + artifact_version type --------------------
+
+
+def test_inbox_post_rejects_empty_dict_target(client, projects_root):
+    _make_project(projects_root)
+    res = client.post(
+        "/api/project/film/inbox",
+        json={"stage": "assets", "type": "action", "action": "regenerate_asset", "target": {}},
+    )
+    assert res.status_code == 400
+
+
+def test_inbox_post_rejects_string_artifact_version(client, projects_root):
+    _make_project(projects_root)
+    res = client.post(
+        "/api/project/film/inbox",
+        json={"stage": "script", "type": "action", "action": "approve", "artifact_version": "1"},
+    )
+    assert res.status_code == 400
+
+
+def test_inbox_post_rejects_bool_artifact_version(client, projects_root):
+    _make_project(projects_root)
+    res = client.post(
+        "/api/project/film/inbox",
+        json={"stage": "script", "type": "action", "action": "approve", "artifact_version": True},
+    )
+    assert res.status_code == 400
+
+
+def test_inbox_post_accepts_int_artifact_version(client, projects_root):
+    _make_project(projects_root)
+    res = client.post(
+        "/api/project/film/inbox",
+        json={"stage": "script", "type": "action", "action": "approve", "artifact_version": 1},
+    )
+    assert res.status_code == 200

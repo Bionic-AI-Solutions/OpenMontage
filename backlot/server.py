@@ -10,9 +10,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import time
+import uuid
 from pathlib import Path
 from typing import Optional
+from urllib.parse import urlsplit
 
 from fastapi import FastAPI, HTTPException, Request, UploadFile, File
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
@@ -28,6 +31,39 @@ THUMB_WIDTHS = (320, 640, 960)
 ALLOWED_UPLOAD_EXT = {".png", ".jpg", ".jpeg", ".webp", ".gif",
                       ".mp4", ".webm", ".mov", ".mp3", ".wav", ".m4a"}
 MAX_UPLOAD_BYTES = 200 * 1024 * 1024
+UPLOAD_CHUNK_BYTES = 1024 * 1024  # 1 MiB — streamed, never buffer whole body first
+
+_LOCALHOST_HOSTNAMES = {"localhost", "127.0.0.1", "[::1]", "::1"}
+
+
+def _origin_is_localhost(origin: str) -> bool:
+    """True when `origin` is a same-machine http(s) origin, any port.
+
+    Used to reject cross-site writes (CSRF) while still allowing the local
+    board UI — which may be served from any localhost port — to post.
+    """
+    try:
+        parts = urlsplit(origin)
+    except ValueError:
+        return False
+    if parts.scheme not in ("http", "https"):
+        return False
+    hostname = parts.hostname
+    if hostname is None:
+        return False
+    return hostname.lower() in {"localhost", "127.0.0.1", "::1"}
+
+
+def _enforce_localhost_origin(request: Request) -> None:
+    """403 when an Origin header is present and is not a localhost origin.
+
+    Absence of the header is fine (non-browser clients, same-origin
+    navigations that omit it) — this only rejects a header that actively
+    names a non-local origin, i.e. cross-site browser writes.
+    """
+    origin = request.headers.get("origin")
+    if origin and not _origin_is_localhost(origin):
+        raise HTTPException(status_code=403, detail="origin not allowed")
 
 # Paths inside a project whose changes are pure noise for the board.
 _IGNORE_PARTS = {"node_modules", ".git", "__pycache__", ".cache"}
@@ -245,6 +281,15 @@ def create_app() -> FastAPI:
     @app.post("/api/project/{project_id}/inbox")
     async def post_inbox(project_id: str, request: Request) -> dict:
         project_dir = _safe_project_dir(project_id)
+        _enforce_localhost_origin(request)
+        content_type = request.headers.get("content-type", "")
+        # Strip any `; charset=...` parameter before comparing.
+        media_type = content_type.split(";", 1)[0].strip().lower()
+        if media_type != "application/json":
+            raise HTTPException(
+                status_code=415,
+                detail=f"content-type must be application/json, got {content_type or '(none)'}",
+            )
         try:
             payload = await request.json()
         except Exception:
@@ -255,20 +300,39 @@ def create_app() -> FastAPI:
         return await asyncio.to_thread(append_inbox, project_dir, payload)
 
     @app.post("/api/project/{project_id}/upload")
-    async def post_upload(project_id: str, file: UploadFile = File(...)) -> dict:
+    async def post_upload(project_id: str, request: Request, file: UploadFile = File(...)) -> dict:
         project_dir = _safe_project_dir(project_id)
+        _enforce_localhost_origin(request)
         suffix = Path(file.filename or "").suffix.lower()
         if suffix not in ALLOWED_UPLOAD_EXT:
             raise HTTPException(status_code=400, detail=f"extension not allowed: {suffix or '(none)'}")
-        data = await file.read()
-        if len(data) > MAX_UPLOAD_BYTES:
-            raise HTTPException(status_code=413, detail="file too large")
-        import re as _re, uuid as _uuid
-        stem = _re.sub(r"[^A-Za-z0-9._-]", "_", Path(file.filename or "upload").stem)[:60]
-        name = f"{stem}-{_uuid.uuid4().hex[:6]}{suffix}"
+        stem = re.sub(r"[^A-Za-z0-9._-]", "_", Path(file.filename or "upload").stem)[:60]
+        name = f"{stem}-{uuid.uuid4().hex[:6]}{suffix}"
         dest_dir = project_dir / "uploads"
         dest_dir.mkdir(parents=True, exist_ok=True)
-        (dest_dir / name).write_bytes(data)
+        dest_path = dest_dir / name
+        tmp_path = dest_dir / f".{name}.{uuid.uuid4().hex[:8]}.part"
+        # Stream in bounded chunks so an oversize upload is rejected as soon
+        # as the accumulated size crosses the limit, instead of buffering the
+        # whole body in memory before the size check (DoS via large uploads).
+        total = 0
+        try:
+            with open(tmp_path, "wb") as out:
+                while True:
+                    chunk = await file.read(UPLOAD_CHUNK_BYTES)
+                    if not chunk:
+                        break
+                    total += len(chunk)
+                    if total > MAX_UPLOAD_BYTES:
+                        raise HTTPException(status_code=413, detail="file too large")
+                    out.write(chunk)
+        except HTTPException:
+            tmp_path.unlink(missing_ok=True)
+            raise
+        except Exception:
+            tmp_path.unlink(missing_ok=True)
+            raise
+        tmp_path.replace(dest_path)
         return {"path": f"uploads/{name}"}
 
     # ---- Thumbnails (downscaled, cached on disk) ------------------------

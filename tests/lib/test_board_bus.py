@@ -58,6 +58,26 @@ def test_regenerate_asset_requires_target():
     assert bus.validate_message(ok) is None
 
 
+def test_regenerate_asset_rejects_empty_dict_target():
+    msg = {"stage": "assets", "type": "action", "action": "regenerate_asset", "target": {}}
+    assert bus.validate_message(msg) is not None
+
+
+def test_approve_rejects_non_int_artifact_version():
+    msg = {"stage": "script", "type": "action", "action": "approve", "artifact_version": "1"}
+    assert bus.validate_message(msg) is not None
+
+
+def test_approve_rejects_bool_artifact_version():
+    msg = {"stage": "script", "type": "action", "action": "approve", "artifact_version": True}
+    assert bus.validate_message(msg) is not None
+
+
+def test_approve_accepts_int_artifact_version():
+    msg = {"stage": "script", "type": "action", "action": "approve", "artifact_version": 1}
+    assert bus.validate_message(msg) is None
+
+
 def test_override_decision_requires_fields():
     base = {"stage": "proposal", "type": "action", "action": "override_decision"}
     assert bus.validate_message(base) is not None
