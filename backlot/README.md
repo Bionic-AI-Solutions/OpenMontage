@@ -1,9 +1,9 @@
 # Backlot — the living storyboard
 
-A read-only local board that shows a production happening: pipeline stages
-lighting up, the script as a screenplay page, the scene plan as a filmstrip
-that fills in as assets generate, decisions, spend, and activity — all
-derived from what the pipeline already writes to `projects/<id>/`.
+A local board that shows a production happening — and, at gates, takes your
+input: each stage has a chat thread plus one-click [Proceed]/[Abort]. The
+server's only writes are `inbox/` (your messages/actions) and `uploads/`;
+the agent remains the sole writer of checkpoints, artifacts, and chat.
 
 ```bash
 python -m backlot open <project-id>   # start server if needed + open browser
