@@ -661,9 +661,17 @@ modal.addEventListener("click", (e) => { if (e.target === modal) closeModal(); }
 // right rail: decisions, activity
 // ---------------------------------------------------------------------------
 
-function decisionOverrideControl(entry) {
+function decisionOverrideControl(entry, s) {
+  // Real decision_log schema (schemas/artifacts/decision_log.schema.json):
+  // options_considered entries carry option_id/label, not option/name.
+  // Accept whichever fields are actually present, preferring option_id
+  // (matches the format of `selected`) then falling back through the rest.
   const options = (entry.options_considered || [])
-    .map((o) => (typeof o === "string" ? o : o.option || o.name))
+    .map((o) => {
+      if (typeof o === "string") return o;
+      if (!o) return "";
+      return o.option_id || o.label || o.option || o.name || "";
+    })
     .filter(Boolean);
   if (!options.length) return null;
   return el("select", {
@@ -672,7 +680,11 @@ function decisionOverrideControl(entry) {
       const chosen = e.target.value;
       if (!chosen || chosen === "__label") return;
       if (confirm(`Change "${entry.subject}" to ${chosen}?`)) {
-        postInbox({ stage: entry.stage || "proposal", type: "action",
+        const awaiting = s && Array.isArray(s.stages)
+          ? (s.stages.find((x) => x.status === "awaiting_human") || {}).name
+          : null;
+        const stage = entry.stage || awaiting || "proposal";
+        postInbox({ stage, type: "action",
           action: "override_decision", category: entry.category,
           subject: entry.subject, chosen_option: chosen });
       }
@@ -709,7 +721,7 @@ function renderDecisions(s) {
       el("div", { class: "d-cat" }, `${d.category || "decision"}${d.confidence ? ` · ${d.confidence}` : ""}`,
         revised ? el("span", { class: "d-revised" }, " · revised") : null),
       el("div", { class: "d-pick" }, `${d.subject || ""} `, el("span", { class: "arrow" }, "→"), ` ${selLabel}`,
-        decisionOverrideControl(d)),
+        decisionOverrideControl(d, s)),
       d.reason ? el("div", { class: "d-why" }, d.reason) : null,
       alts.length ? el("div", { class: "d-alt" }, "also considered: ",
         alts.slice(0, 3).map((o, i) => [i ? " · " : "", el("s", {}, o.label || o.option_id)]).flat()) : null,
