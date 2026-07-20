@@ -6,10 +6,12 @@ progressively-written artifacts — so the board can be watched updating live.
 Also useful as a demo driver.
 
     python scripts/backlot_simulate_run.py [--project backlot-demo-run]
-        [--fast] [--cleanup]
+        [--fast] [--cleanup] [--interactive]
 
---fast     compresses waits to ~0.3s (for automated verification)
---cleanup  removes the project directory at the end
+--fast         compresses waits to ~0.3s (for automated verification)
+--cleanup      removes the project directory at the end
+--interactive  hold the assets gate for a real board Proceed click instead
+               of auto-approving (requires `python -m backlot serve` running)
 """
 
 from __future__ import annotations
@@ -64,6 +66,8 @@ def main() -> int:
     parser.add_argument("--project", default="backlot-demo-run")
     parser.add_argument("--fast", action="store_true")
     parser.add_argument("--cleanup", action="store_true")
+    parser.add_argument("--interactive", action="store_true",
+                        help="hold real gates: wait for board Proceed clicks instead of auto-approving")
     args = parser.parse_args()
 
     wait = 0.3 if args.fast else 2.5
@@ -147,7 +151,21 @@ def main() -> int:
        cost_snapshot={"total_spent_usd": manifest["total_cost_usd"],
                       "total_reserved_usd": 0.0,
                       "budget_remaining_usd": 5 - manifest["total_cost_usd"]})
-    time.sleep(wait)
+    if args.interactive:
+        from lib.board_bus import append_chat
+        from lib.live_gate import wait_for_messages, read_inbox_cursor
+        append_chat(pdir, "assets", "agent",
+                    "[sim] assets ready — click Proceed on the board.",
+                    extra={"kind": "gate_presentation", "artifact_version": 1})
+        print("[sim] holding assets gate — click Proceed on the board…")
+        msgs = wait_for_messages(pdir, cursor=read_inbox_cursor(pdir, "assets"),
+                                 timeout_seconds=600, poll_seconds=1.0)
+        approved = any(m.get("action") == "approve" for m in msgs)
+        if not approved:
+            print("[sim] no approval — stopping at assets")
+            return 1
+    else:
+        time.sleep(wait)
     cp("assets", "completed", {"asset_manifest": manifest}, human_approved=True)
 
     print(f"[sim] done — board at http://127.0.0.1:4750/p/{pid}")
