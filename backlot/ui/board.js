@@ -157,6 +157,81 @@ function toggleDrawer(stageName) {
   render();
 }
 
+// ---------------------------------------------------------------------------
+// stage chat panel — inbox transport + chat/proceed/abort UI
+// ---------------------------------------------------------------------------
+
+async function postInbox(payload) {
+  try {
+    const res = await fetch(`/api/project/${encodedProjectId}/inbox`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const detail = (await res.json().catch(() => ({}))).detail || res.statusText;
+      alert(`Board action failed: ${detail}`);
+    }
+    return res.ok;
+  } catch (err) {
+    alert(`Board action failed: ${err}`);
+    return false;
+  }
+}
+
+function chatMessageRow(m) {
+  const who = m.role === "agent" ? "agent" : "you";
+  return el("div", { class: `chat-msg chat-${who}` },
+    el("span", { class: "chat-role" }, who),
+    el("div", { class: "chat-text" }, m.text || ""));
+}
+
+function renderChatPanel(s, st) {
+  const thread = (s.chat || {})[st.name] || [];
+  const awaiting = st.status === "awaiting_human";
+  const live = !!s.agent_live;
+
+  const composer = el("form", {
+    class: "chat-composer",
+    onsubmit: async (e) => {
+      e.preventDefault();
+      const input = e.target.querySelector("input");
+      const text = input.value.trim();
+      if (!text) return;
+      input.value = "";
+      await postInbox({ stage: st.name, type: "chat", text });
+    },
+  },
+    el("input", { type: "text", placeholder: live
+      ? "Tell the agent what to change…"
+      : "Agent offline — your message will queue…" }),
+    el("button", { type: "submit" }, "SEND"));
+
+  const gateButtons = awaiting ? el("div", { class: "chat-gate-actions" },
+    el("button", {
+      class: "gate-proceed", type: "button",
+      onclick: () => postInbox({ stage: st.name, type: "action",
+        action: "approve", artifact_version: st.artifact_version }),
+    }, "✓ PROCEED AS RECOMMENDED"),
+    el("button", {
+      class: "gate-abort", type: "button",
+      onclick: () => {
+        if (confirm("Abort this production?")) {
+          postInbox({ stage: st.name, type: "action", action: "abort" });
+        }
+      },
+    }, "✕ ABORT")) : null;
+
+  return el("section", { class: "chat-panel" },
+    el("div", { class: "chat-head" },
+      el("span", { class: `chat-live ${live ? "on" : "off"}` },
+        live ? "● agent listening" : "○ agent offline — messages will queue"),
+      awaiting ? el("span", { class: "chat-version" }, `v${st.artifact_version}`) : null),
+    el("div", { class: "chat-thread" }, ...thread.map(chatMessageRow)),
+    gateButtons,
+    composer);
+}
+
 const STAGE_ARTIFACTS = {
   research: ["research_brief"],
   proposal: ["proposal_packet"],
@@ -241,6 +316,7 @@ function renderDrawer(s) {
       st.timestamp ? el("span", { class: "meta", style: "font-family:var(--mono);font-size:calc(10.5px * var(--fs-scale));color:var(--text-3)" }, st.timestamp) : null,
       el("span", { class: "close", onclick: () => toggleDrawer(st.name) }, "CLOSE ✕"),
     ),
+    renderChatPanel(s, st),
     body,
   );
 }
@@ -523,6 +599,11 @@ function renderApprovalReview(s) {
         ? `Approval unlocks ${humanize(nextStage.name)}.`
         : "This is the final approval gate."),
       el("button", { type: "button", onclick: () => toggleDrawer(awaiting.name) }, "OPEN FULL ARTIFACT"),
+      el("button", { type: "button", class: "gate-proceed",
+        onclick: () => postInbox({ stage: awaiting.name, type: "action",
+          action: "approve",
+          artifact_version: s.stages[stageIndex].artifact_version }),
+      }, "✓ PROCEED AS RECOMMENDED"),
     ),
   );
 }
