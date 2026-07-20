@@ -156,6 +156,45 @@ class TestBoardState:
         assert idea.get("undeclared") is True
 
 
+def test_board_state_exposes_chat_and_liveness(tmp_path):
+    from lib import board_bus as bus
+    from backlot.state import load_board_state
+    project = tmp_path / "chatty"
+    (project / "artifacts").mkdir(parents=True)
+    (project / "project.json").write_text(json.dumps(
+        {"project_id": "chatty", "title": "Chatty", "pipeline_type": "cinematic"}))
+    bus.append_chat(project, "script", "agent", "Gate ready.",
+                    extra={"kind": "gate_presentation"})
+    bus.touch_heartbeat(project)
+    state = load_board_state(project)
+    assert state["agent_live"] is True
+    assert [m["text"] for m in state["chat"]["script"]] == ["Gate ready."]
+
+
+def test_board_state_no_chat_dir(tmp_path):
+    from backlot.state import load_board_state
+    project = tmp_path / "quiet"
+    project.mkdir()
+    state = load_board_state(project)
+    assert state["chat"] == {}
+    assert state["agent_live"] is False
+
+
+def test_stage_rail_has_artifact_version(tmp_path):
+    from backlot.state import load_board_state
+    project = tmp_path / "versioned"
+    (project / "history").mkdir(parents=True)
+    (project / "project.json").write_text(json.dumps(
+        {"project_id": "versioned", "title": "V", "pipeline_type": "cinematic"}))
+    (project / "checkpoint_script.json").write_text(json.dumps(
+        {"stage": "script", "status": "awaiting_human", "timestamp": "2026-07-20T00:00:00Z"}))
+    (project / "history" / "checkpoint_script_1.json").write_text(json.dumps(
+        {"stage": "script", "status": "awaiting_human", "timestamp": "2026-07-19T00:00:00Z"}))
+    state = load_board_state(project)
+    script = next(s for s in state["stages"] if s["name"] == "script")
+    assert script["artifact_version"] == 2 == script["versions"]
+
+
 class TestLibrary:
     def test_list_projects_sorts_live_first(self, projects_root):
         old = _make_project(projects_root, "old-film")

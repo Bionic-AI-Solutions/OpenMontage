@@ -12,6 +12,7 @@ import re
 from pathlib import Path
 from typing import Any, Optional
 
+from lib.board_bus import CHAT_DIR, agent_live, read_chat
 from lib.events import read_events
 from lib.paths import PROJECTS_DIR, REPO_ROOT  # single source of truth (env-overridable)
 
@@ -20,7 +21,7 @@ MEDIA_VIDEO_EXT = {".mp4", ".webm", ".mov"}
 MEDIA_AUDIO_EXT = {".mp3", ".wav", ".m4a", ".ogg"}
 
 # Directories inside a project we never scan for media (build noise).
-SCAN_EXCLUDE = {"node_modules", ".git", "__pycache__", "history", ".cache"}
+SCAN_EXCLUDE = {"node_modules", ".git", "__pycache__", "history", ".cache", "inbox", "uploads"}
 
 # Stages every pipeline shares (fallback rail when the manifest is unknown).
 FALLBACK_STAGES = [
@@ -165,6 +166,7 @@ def _build_stage_rail(
             "human_approved": cp.get("human_approved") if cp else None,
             "partial_progress": (cp.get("metadata") or {}).get("partial_progress") if cp else None,
             "versions": len(versions) + (1 if cp else 0),
+            "artifact_version": len(versions) + (1 if cp else 0),
             # Chronological status trail (history + current) — powers replay.
             "history_entries": (
                 [{"status": v.get("status"), "timestamp": v.get("timestamp")} for v in versions]
@@ -206,6 +208,7 @@ def _build_stage_rail(
             "human_approved": cp.get("human_approved"),
             "partial_progress": None,
             "versions": 1 + len(history.get(name, [])),
+            "artifact_version": 1 + len(history.get(name, [])),
             "undeclared": True,
         }
         pos = canon.get(name)
@@ -608,6 +611,14 @@ def load_board_state(project_dir: Path) -> dict[str, Any]:
     storyboard = _build_storyboard(project_dir, artifacts, events)
     media = _scan_media(project_dir)
 
+    chat: dict[str, list[dict]] = {}
+    chat_dir = project_dir / CHAT_DIR
+    if chat_dir.is_dir():
+        for f in sorted(chat_dir.glob("*.jsonl")):
+            msgs = read_chat(project_dir, f.stem)
+            if msgs:
+                chat[f.stem] = msgs
+
     stages = _build_stage_rail(pipeline_meta, checkpoints, history)
 
     # Cost: latest checkpoint snapshot wins; fall back to manifest total.
@@ -651,6 +662,8 @@ def load_board_state(project_dir: Path) -> dict[str, Any]:
         "cost": cost,
         "last_activity": last_activity,
         "live": bool(last_activity and (now - last_activity) < LIVE_WINDOW_SECONDS),
+        "chat": chat,
+        "agent_live": agent_live(project_dir),
     }
     state["poster"] = _find_poster(project_dir, state)
     return state
