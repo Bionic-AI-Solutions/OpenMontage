@@ -415,3 +415,50 @@ def test_inbox_post_accepts_int_artifact_version(client, projects_root):
         json={"stage": "script", "type": "action", "action": "approve", "artifact_version": 1},
     )
     assert res.status_code == 200
+
+
+# ---- BACKLOT_ALLOWED_ORIGINS (deploy-time origin allowlist) ----------------
+
+
+def test_deploy_origin_rejected_by_default(client, projects_root):
+    _make_project(projects_root)
+    res = client.post(
+        "/api/project/film/inbox",
+        json={"stage": "script", "type": "chat", "text": "hi"},
+        headers={"origin": "https://om.baisoln.com"},
+    )
+    assert res.status_code == 403
+
+
+def test_deploy_origin_accepted_when_allowlisted(client, projects_root, monkeypatch):
+    monkeypatch.setenv("BACKLOT_ALLOWED_ORIGINS", "https://om.baisoln.com")
+    _make_project(projects_root)
+    res = client.post(
+        "/api/project/film/inbox",
+        json={"stage": "script", "type": "chat", "text": "hi"},
+        headers={"origin": "https://om.baisoln.com"},
+    )
+    assert res.status_code == 200
+    up = client.post(
+        "/api/project/film/upload",
+        files={"file": ("swap.png", b"\x89PNG fake", "image/png")},
+        headers={"origin": "https://om.baisoln.com"},
+    )
+    assert up.status_code == 200
+
+
+def test_deploy_allowlist_does_not_open_other_origins(client, projects_root, monkeypatch):
+    monkeypatch.setenv("BACKLOT_ALLOWED_ORIGINS", "https://om.baisoln.com, https://other.example")
+    _make_project(projects_root)
+    res = client.post(
+        "/api/project/film/inbox",
+        json={"stage": "script", "type": "chat", "text": "hi"},
+        headers={"origin": "https://evil.example"},
+    )
+    assert res.status_code == 403
+    ok = client.post(
+        "/api/project/film/inbox",
+        json={"stage": "script", "type": "chat", "text": "hi"},
+        headers={"origin": "https://OTHER.example/"},
+    )
+    assert ok.status_code == 200

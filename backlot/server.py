@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 import time
 import uuid
@@ -33,7 +34,7 @@ ALLOWED_UPLOAD_EXT = {".png", ".jpg", ".jpeg", ".webp", ".gif",
 MAX_UPLOAD_BYTES = 200 * 1024 * 1024
 UPLOAD_CHUNK_BYTES = 1024 * 1024  # 1 MiB — streamed, never buffer whole body first
 
-_LOCALHOST_HOSTNAMES = {"localhost", "127.0.0.1", "[::1]", "::1"}
+_LOCALHOST_HOSTNAMES = {"localhost", "127.0.0.1", "::1"}
 
 
 def _origin_is_localhost(origin: str) -> bool:
@@ -51,19 +52,33 @@ def _origin_is_localhost(origin: str) -> bool:
     hostname = parts.hostname
     if hostname is None:
         return False
-    return hostname.lower() in {"localhost", "127.0.0.1", "::1"}
+    return hostname.lower() in _LOCALHOST_HOSTNAMES
 
 
-def _enforce_localhost_origin(request: Request) -> None:
-    """403 when an Origin header is present and is not a localhost origin.
+def _extra_allowed_origins() -> set[str]:
+    """Deploy-time additions from BACKLOT_ALLOWED_ORIGINS (comma-separated
+    exact origins, e.g. "https://om.baisoln.com"). Read per-call so a
+    long-lived server honors env changes and tests can monkeypatch."""
+    raw = os.environ.get("BACKLOT_ALLOWED_ORIGINS", "")
+    return {o.strip().rstrip("/").lower() for o in raw.split(",") if o.strip()}
+
+
+def _enforce_allowed_origin(request: Request) -> None:
+    """403 when an Origin header is present and is neither a localhost
+    origin nor listed in BACKLOT_ALLOWED_ORIGINS.
 
     Absence of the header is fine (non-browser clients, same-origin
     navigations that omit it) — this only rejects a header that actively
-    names a non-local origin, i.e. cross-site browser writes.
+    names a disallowed origin, i.e. cross-site browser writes.
     """
     origin = request.headers.get("origin")
-    if origin and not _origin_is_localhost(origin):
-        raise HTTPException(status_code=403, detail="origin not allowed")
+    if not origin:
+        return
+    if _origin_is_localhost(origin):
+        return
+    if origin.rstrip("/").lower() in _extra_allowed_origins():
+        return
+    raise HTTPException(status_code=403, detail="origin not allowed")
 
 # Paths inside a project whose changes are pure noise for the board.
 _IGNORE_PARTS = {"node_modules", ".git", "__pycache__", ".cache"}
@@ -281,7 +296,7 @@ def create_app() -> FastAPI:
     @app.post("/api/project/{project_id}/inbox")
     async def post_inbox(project_id: str, request: Request) -> dict:
         project_dir = _safe_project_dir(project_id)
-        _enforce_localhost_origin(request)
+        _enforce_allowed_origin(request)
         content_type = request.headers.get("content-type", "")
         # Strip any `; charset=...` parameter before comparing.
         media_type = content_type.split(";", 1)[0].strip().lower()
@@ -302,7 +317,7 @@ def create_app() -> FastAPI:
     @app.post("/api/project/{project_id}/upload")
     async def post_upload(project_id: str, request: Request, file: UploadFile = File(...)) -> dict:
         project_dir = _safe_project_dir(project_id)
-        _enforce_localhost_origin(request)
+        _enforce_allowed_origin(request)
         suffix = Path(file.filename or "").suffix.lower()
         if suffix not in ALLOWED_UPLOAD_EXT:
             raise HTTPException(status_code=400, detail=f"extension not allowed: {suffix or '(none)'}")
