@@ -65,3 +65,13 @@ def test_wait_respects_cursor(project_dir):
     got = live_gate.wait_for_messages(project_dir, cursor=live_gate.cursor_for(m1),
                                       timeout_seconds=0.2, poll_seconds=0.05)
     assert got == []
+
+
+def test_read_inbox_cursor_wrong_shape_metadata(project_dir):
+    (project_dir / "checkpoint_script.json").write_text('{"stage": "script", "metadata": "oops"}')
+    assert live_gate.read_inbox_cursor(project_dir, "script") is None
+
+
+def test_read_inbox_cursor_non_dict_checkpoint(project_dir):
+    (project_dir / "checkpoint_script.json").write_text("[1, 2, 3]")
+    assert live_gate.read_inbox_cursor(project_dir, "script") is None

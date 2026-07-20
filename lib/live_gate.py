@@ -21,7 +21,12 @@ def read_inbox_cursor(project_dir: Path, stage: str) -> Optional[dict]:
     try:
         with open(path, encoding="utf-8") as f:
             data = json.load(f)
-        cursor = (data.get("metadata") or {}).get("inbox_cursor")
+        if not isinstance(data, dict):
+            return None
+        metadata = data.get("metadata")
+        if not isinstance(metadata, dict):
+            return None
+        cursor = metadata.get("inbox_cursor")
         return cursor if isinstance(cursor, dict) else None
     except (OSError, json.JSONDecodeError):
         return None
