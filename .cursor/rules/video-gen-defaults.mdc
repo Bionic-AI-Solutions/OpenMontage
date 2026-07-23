@@ -1,0 +1,14 @@
+---
+description: Prefer cluster ComfyUI video over paid VEO/Sora unless user explicitly asks
+alwaysApply: true
+---
+
+# Video generation provider defaults
+
+When choosing a video generation tool for OpenMontage productions:
+
+1. **Default to cluster ComfyUI** — `comfyui_video` (WAN 2.2 T2V/I2V via `COMFYUI_SERVER_URL`). Prefer **image_to_video** from `genimage` stills for scene consistency.
+2. **Do not use VEO, Sora, Kling, Runway, or other paid cloud video engines** unless the user **explicitly** names that engine (e.g. "use veo", "use sora").
+3. If ComfyUI fails (missing models, OOM, queue errors), **stop and ask** before falling back to a paid provider — do not silently upgrade.
+4. Log `provider_selection` in `decision_log` with ComfyUI as the selected option and paid engines listed with `rejected_because` when they were not requested.
+5. Image stills still default to `genimage` (cluster) with `openai_image` / other cloud only as approved fallbacks.

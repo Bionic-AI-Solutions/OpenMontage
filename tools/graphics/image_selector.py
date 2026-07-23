@@ -243,6 +243,18 @@ class ImageSelector(BaseTool):
             if "query" in props and "query" not in adapted:
                 adapted["query"] = adapted.get("prompt", "")
 
+            # genimage (and similar) use operation=generate|edit|… — map from
+            # selector generation_mode, and never pass selector-only "rank".
+            op_schema = props.get("operation") or {}
+            op_enum = set(op_schema.get("enum") or [])
+            genimage_ops = {"generate", "edit", "upscale", "remove_bg"}
+            if op_enum and op_enum <= genimage_ops:
+                mode = adapted.get("generation_mode") or "generate"
+                if mode == "edit":
+                    adapted["operation"] = "edit"
+                elif adapted.get("operation") not in op_enum:
+                    adapted["operation"] = "generate"
+
         # Strip selector-only keys that downstream tools don't understand
         adapted.pop("preferred_provider", None)
         adapted.pop("allowed_providers", None)
@@ -260,6 +272,7 @@ class ImageSelector(BaseTool):
                 "aspect_ratio",
                 "resolution",
                 "generation_mode",
+                "operation",
                 "image_url",
                 "image_path",
                 "image_urls",

@@ -13,12 +13,18 @@ from dotenv import load_dotenv
 
 
 def load_env(project_root: Optional[Path] = None) -> None:
-    """Load .env file from project root."""
+    """Load .env file from project root, then overlay Vault secrets."""
     if project_root is None:
         project_root = Path(__file__).resolve().parent.parent
     env_path = project_root / ".env"
     if env_path.exists():
         load_dotenv(env_path)
+    try:
+        from lib.vault_config import ensure_vault_config_loaded
+
+        ensure_vault_config_loaded()
+    except Exception:
+        pass
 
 
 def get_env(key: str, default: Optional[str] = None) -> Optional[str]:

@@ -32,6 +32,7 @@ Quick routing for common animation-pipeline needs:
 | Schema | `schemas/artifacts/asset_manifest.schema.json` | Artifact validation |
 | Prior artifacts | `state.artifacts["scene_plan"]["scene_plan"]`, `state.artifacts["script"]["script"]`, `state.artifacts["proposal"]["proposal_packet"]` | Tool path and beat map |
 | Tools | `tts_selector`, `image_selector`, `video_selector`, `math_animate`, `diagram_gen`, `code_snippet`, `music_gen` — selectors auto-discover all available providers from the registry | Asset production options |
+| Cluster media | Prefer `gpu_ai_tts` / `genimage` / `gpu_ai_music` when AVAILABLE — see `.agents/skills/gpu-ai/SKILL.md` | In-cluster audio/image |
 | Playbook | Active style playbook | Visual consistency |
 
 ## Process

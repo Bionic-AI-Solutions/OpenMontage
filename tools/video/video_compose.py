@@ -388,11 +388,11 @@ class VideoCompose(BaseTool):
             return False
 
     def _compose(self, inputs: dict[str, Any]) -> ToolResult:
-        """FFmpeg composition: concat video cuts, add audio, burn subtitles.
+        """FFmpeg composition: concat cuts, add audio, burn subtitles.
 
-        Handles video sources only. Still images and animated scene types
-        are routed to Remotion via the render operation — call compose
-        directly only for pure video pipelines (e.g. talking-head).
+        Supports video sources and still images. Stills are converted to
+        short Ken Burns / pan motion segments so `render_runtime="ffmpeg"`
+        works for still-led explainers when Remotion is unavailable.
         """
         edit_decisions = inputs.get("edit_decisions")
         if not edit_decisions:
@@ -472,16 +472,90 @@ class VideoCompose(BaseTool):
                 duration = out_s - in_s
                 speed = cut.get("speed", 1.0)
 
+                # Normalize every segment to a consistent container so the
+                # concat-copy step is always safe. The concat demuxer with
+                # `-c copy` requires identical codec / resolution / fps /
+                # pix_fmt / sar across ALL segments — otherwise it throws
+                # "Non-monotonous DTS" or silently produces corrupt output.
+                #
+                # Target is target_w x target_h @ 30fps, yuv420p, sar=1
+                # (default 1920x1080; overridable via `profile` or
+                # edit_decisions.metadata.compose_target — see above).
+                # fit="pad" letterboxes to preserve all content; fit="cover"
+                # scales-to-fill then centre-crops (no bars, for vertical social).
+                if fit_mode == "cover":
+                    geom = [
+                        f"scale={target_w}:{target_h}:force_original_aspect_ratio=increase",
+                        f"crop={target_w}:{target_h}",
+                    ]
+                else:
+                    geom = [
+                        f"scale={target_w}:{target_h}:force_original_aspect_ratio=decrease",
+                        f"pad={target_w}:{target_h}:(ow-iw)/2:(oh-ih)/2:color=black",
+                    ]
+
                 if self._is_image(source):
-                    return ToolResult(
-                        success=False,
-                        error=(
-                            f"Still image '{source.name}' in cuts. "
-                            "Use operation='render' (auto-routes to Remotion) "
-                            "or operation='remotion_render' for compositions "
-                            "with images, animations, or component scenes."
-                        ),
+                    # Still → motion segment for ffmpeg-locked renders (Ken Burns).
+                    # Remotion remains preferred when available; this path keeps
+                    # still-led explainers working when render_runtime="ffmpeg".
+                    if duration <= 0:
+                        return ToolResult(
+                            success=False,
+                            error=f"Image cut {cut.get('id', i)} has non-positive duration",
+                        )
+                    frames = max(1, int(round(duration * 30)))
+                    anim = (
+                        (cut.get("transform") or {}).get("animation") or "ken-burns-slow-zoom"
+                    ).lower()
+                    # Pre-scale larger than target so zoompan has headroom.
+                    pre_w, pre_h = target_w * 2, target_h * 2
+                    if "static" in anim:
+                        z_expr = "1"
+                        x_expr = "0"
+                        y_expr = "0"
+                    elif "pan-left" in anim:
+                        z_expr = "1.2"
+                        x_expr = f"(iw-iw/zoom)*on/{max(frames - 1, 1)}"
+                        y_expr = "(ih-ih/zoom)/2"
+                    elif "pan-right" in anim:
+                        z_expr = "1.2"
+                        x_expr = f"(iw-iw/zoom)*(1-on/{max(frames - 1, 1)})"
+                        y_expr = "(ih-ih/zoom)/2"
+                    else:
+                        # Default slow zoom-in (ken-burns-*).
+                        z_expr = f"min(1.0+0.0008*on,1.15)"
+                        x_expr = "iw/2-(iw/zoom/2)"
+                        y_expr = "ih/2-(ih/zoom/2)"
+                    vf = (
+                        f"scale={pre_w}:{pre_h}:force_original_aspect_ratio=increase,"
+                        f"crop={pre_w}:{pre_h},"
+                        f"zoompan=z='{z_expr}':x='{x_expr}':y='{y_expr}':"
+                        f"d={frames}:s={target_w}x{target_h}:fps=30,"
+                        "setsar=1"
                     )
+                    cmd = [
+                        "ffmpeg", "-y",
+                        "-loop", "1",
+                        "-i", str(source),
+                        "-f", "lavfi",
+                        "-t", str(duration),
+                        "-i", "anullsrc=channel_layout=stereo:sample_rate=48000",
+                        "-filter:v", vf,
+                        "-t", str(duration),
+                        "-map", "0:v:0",
+                        "-map", "1:a:0",
+                        "-c:v", codec,
+                        "-crf", str(crf),
+                        "-preset", preset,
+                        "-pix_fmt", "yuv420p",
+                        "-r", "30",
+                        "-c:a", "aac",
+                        "-b:a", "192k",
+                        "-ar", "48000",
+                        "-ac", "2",
+                        str(seg_path),
+                    ]
+                    self.run_command(cmd)
                 else:
                     # Video source: trim to segment.
                     #
@@ -504,27 +578,6 @@ class VideoCompose(BaseTool):
                         "-i", str(source),
                     ]
 
-                    # Normalize every segment to a consistent container so the
-                    # concat-copy step is always safe. The concat demuxer with
-                    # `-c copy` requires identical codec / resolution / fps /
-                    # pix_fmt / sar across ALL segments — otherwise it throws
-                    # "Non-monotonous DTS" or silently produces corrupt output.
-                    #
-                    # Target is target_w x target_h @ 30fps, yuv420p, sar=1
-                    # (default 1920x1080; overridable via `profile` or
-                    # edit_decisions.metadata.compose_target — see above).
-                    # fit="pad" letterboxes to preserve all content; fit="cover"
-                    # scales-to-fill then centre-crops (no bars, for vertical social).
-                    if fit_mode == "cover":
-                        geom = [
-                            f"scale={target_w}:{target_h}:force_original_aspect_ratio=increase",
-                            f"crop={target_w}:{target_h}",
-                        ]
-                    else:
-                        geom = [
-                            f"scale={target_w}:{target_h}:force_original_aspect_ratio=decrease",
-                            f"pad={target_w}:{target_h}:(ow-iw)/2:(oh-ih)/2:color=black",
-                        ]
                     vf_parts: list[str] = [*geom, "setsar=1", "fps=30"]
                     af_parts: list[str] = []
                     if speed != 1.0:

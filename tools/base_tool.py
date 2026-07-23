@@ -57,7 +57,17 @@ def _load_dotenv() -> None:
                 os.environ[key] = value
 
 
+def _load_vault_secrets() -> None:
+    """Overlay Vault secrets after .env (non-empty env always wins)."""
+    try:
+        from lib.vault_config import ensure_vault_config_loaded
+    except ImportError:
+        return
+    ensure_vault_config_loaded()
+
+
 _load_dotenv()
+_load_vault_secrets()
 
 
 class ToolTier(str, Enum):
