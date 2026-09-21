@@ -32,7 +32,22 @@ Quick routing for common explainer needs:
 | Prior artifacts | `state.artifacts["scene_plan"]["scene_plan"]`, `state.artifacts["script"]["script"]`, `state.artifacts["proposal"]["proposal_packet"]` | What to produce |
 | Playbook | Active style playbook | Image prompts, diagram style, audio preferences |
 | Tools | `tts_selector`, `image_selector`, `video_selector`, `diagram_gen`, `code_snippet`, `music_gen` — selectors auto-discover all available providers from the registry | Generation capabilities |
+| Cluster media | `gpu_ai_tts`, `gpu_ai_stt`, `gpu_ai_music`, `genimage`, `media_services`, `omnivoice_tts` — in-cluster gpu-ai stack (see `.agents/skills/gpu-ai/SKILL.md`) | Prefer when AVAILABLE |
 | Cost tracker | `tools/cost_tracker.py` | Budget governance |
+
+### Cluster-first provider preference (gpu-ai)
+
+When running inside the Solution cluster, prefer free/local backends before paid cloud APIs:
+
+| Need | Prefer (via selector or direct) | Fallback |
+|------|----------------------------------|----------|
+| Narration | `tts_selector` with `preferred_provider: "gpu_ai"` (voice `aditya`) or `omnivoice_tts` / `sarvam_tts` | `openai_tts` / `elevenlabs_tts` |
+| Stills | `image_selector` with `preferred_provider: "genimage"` | `openai_image` / `google_imagen` (ComfyUI may OOM → Runware needs credits) |
+| Music bed | `gpu_ai_music` (ACE-Step) when AVAILABLE | `pixabay_music` / `music_library/` |
+| Captions / STT | `gpu_ai_stt` | local faster-whisper / `azure_stt` |
+| Source footage ops | `media_services` (`scenes` / `diarize` / `separate` / `animate`) with a worker-reachable `url` | local `scene_detect` / `video_analyzer` |
+
+Announce the chosen tool/provider before paid calls. If `genimage` fails with Runware `insufficientCredits` or ComfyUI OOM, switch to `openai_image` and log a new `decision_log` entry.
 
 ## Process
 
@@ -93,7 +108,7 @@ For each script section:
    - OpenAI: `instructions` only with `model: "gpt-4o-mini-tts"`; use `response_format` for output format
    - Google TTS: `input_type: "ssml"` when using `<break>` tags, plus `speaking_rate` in `0.25..2.0` and `pitch` in `-20..20`
    - ElevenLabs: `stability`, `similarity_boost`, `style`, `speed`, and `use_speaker_boost`
-7. Generate using `tts_selector` — it auto-routes to the best available TTS provider based on user preference and availability. Check the registry's `best_for` fields to understand each provider's strengths.
+7. Generate using `tts_selector` — it auto-routes to the best available TTS provider based on user preference and availability. In-cluster, prefer `preferred_provider: "gpu_ai"` (gateway → OmniVoice/Sarvam) unless the user approved a paid voice. Check the registry's `best_for` fields to understand each provider's strengths.
 8. Record the applied `voice_performance` metadata on each narration asset
 9. Verify the audio file exists and duration matches expected timing (±15%)
 
@@ -136,7 +151,7 @@ Process asset tasks grouped by tool for efficiency:
 3. Source the background track in this priority order:
    - **User-selected library track**: If the proposal specified a track from `music_library/`, copy it to `projects/<project>/assets/music/background_music.mp3`
    - **User music library (`music_library/`)**: If the folder exists and has tracks, pick the best match for the playbook's `audio.music_mood`. List candidates by filename and let the EP decide.
-   - **Music generation API**: Use `music_gen` (ElevenLabs) or `suno_music` if available. Check status via registry first — if the tool is unavailable or quota-exhausted, skip immediately (do NOT attempt and fail silently).
+   - **Music generation API**: Prefer `gpu_ai_music` (cluster ACE-Step) when AVAILABLE; else `music_gen` (ElevenLabs) or `suno_music`. Check status via registry first — if the tool is unavailable or quota-exhausted, skip immediately (do NOT attempt and fail silently).
    - **No music available**: Log this clearly in the asset manifest as `"music_status": "unavailable"` with the reason. Do NOT silently produce a video without music — the EP and user should know.
 4. Duration should be at least as long as total video duration. If shorter, it can be looped by the compose stage.
 5. Verify the audio file exists at `projects/<project>/assets/music/background_music.mp3`

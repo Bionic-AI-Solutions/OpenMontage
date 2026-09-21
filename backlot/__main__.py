@@ -20,11 +20,29 @@ import webbrowser
 from backlot import DEFAULT_PORT
 
 
+def _bootstrap_secrets() -> None:
+    """Load .env then Vault (t6-apps/<slug>/config) before serving."""
+    # Importing tools.base_tool runs dotenv + vault loaders at import time.
+    try:
+        import tools.base_tool  # noqa: F401
+    except Exception:
+        try:
+            from lib.vault_config import ensure_vault_config_loaded
+
+            ensure_vault_config_loaded()
+        except Exception:
+            pass
+
+
 def _port() -> int:
     try:
         return int(os.environ.get("BACKLOT_PORT", DEFAULT_PORT))
     except ValueError:
         return DEFAULT_PORT
+
+
+def _host() -> str:
+    return os.environ.get("BACKLOT_HOST", "127.0.0.1").strip() or "127.0.0.1"
 
 
 def _server_alive(port: int) -> bool:
@@ -79,14 +97,17 @@ def cmd_open(project_id: str | None) -> int:
     return 0
 
 
-def cmd_serve(port: int) -> int:
+def cmd_serve(port: int, host: str | None = None) -> int:
     import uvicorn
 
-    uvicorn.run("backlot.server:app", host="127.0.0.1", port=port, log_level="warning")
+    _bootstrap_secrets()
+    bind_host = host or _host()
+    uvicorn.run("backlot.server:app", host=bind_host, port=port, log_level="warning")
     return 0
 
 
 def main(argv: list[str] | None = None) -> int:
+    _bootstrap_secrets()
     parser = argparse.ArgumentParser(prog="backlot", description=__doc__)
     sub = parser.add_subparsers(dest="command")
 
@@ -95,12 +116,17 @@ def main(argv: list[str] | None = None) -> int:
 
     p_serve = sub.add_parser("serve", help="run the Backlot server in the foreground")
     p_serve.add_argument("--port", type=int, default=_port())
+    p_serve.add_argument(
+        "--host",
+        default=_host(),
+        help="bind address (default BACKLOT_HOST or 127.0.0.1; use 0.0.0.0 in k8s)",
+    )
 
     args = parser.parse_args(argv)
     if args.command == "open":
         return cmd_open(args.project_id)
     if args.command == "serve":
-        return cmd_serve(args.port)
+        return cmd_serve(args.port, host=args.host)
     parser.print_help()
     return 2
 

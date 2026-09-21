@@ -157,6 +157,81 @@ function toggleDrawer(stageName) {
   render();
 }
 
+// ---------------------------------------------------------------------------
+// stage chat panel — inbox transport + chat/proceed/abort UI
+// ---------------------------------------------------------------------------
+
+async function postInbox(payload) {
+  try {
+    const res = await fetch(`/api/project/${encodedProjectId}/inbox`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const detail = (await res.json().catch(() => ({}))).detail || res.statusText;
+      alert(`Board action failed: ${detail}`);
+    }
+    return res.ok;
+  } catch (err) {
+    alert(`Board action failed: ${err}`);
+    return false;
+  }
+}
+
+function chatMessageRow(m) {
+  const who = m.role === "agent" ? "agent" : "you";
+  return el("div", { class: `chat-msg chat-${who}` },
+    el("span", { class: "chat-role" }, who),
+    el("div", { class: "chat-text" }, m.text || ""));
+}
+
+function renderChatPanel(s, st) {
+  const thread = (s.chat || {})[st.name] || [];
+  const awaiting = st.status === "awaiting_human";
+  const live = !!s.agent_live;
+
+  const composer = el("form", {
+    class: "chat-composer",
+    onsubmit: async (e) => {
+      e.preventDefault();
+      const input = e.target.querySelector("input");
+      const text = input.value.trim();
+      if (!text) return;
+      input.value = "";
+      await postInbox({ stage: st.name, type: "chat", text });
+    },
+  },
+    el("input", { type: "text", placeholder: live
+      ? "Tell the agent what to change…"
+      : "Agent offline — your message will queue…" }),
+    el("button", { type: "submit" }, "SEND"));
+
+  const gateButtons = awaiting ? el("div", { class: "chat-gate-actions" },
+    el("button", {
+      class: "gate-proceed", type: "button",
+      onclick: () => postInbox({ stage: st.name, type: "action",
+        action: "approve", artifact_version: st.artifact_version }),
+    }, "✓ PROCEED AS RECOMMENDED"),
+    el("button", {
+      class: "gate-abort", type: "button",
+      onclick: () => {
+        if (confirm("Abort this production?")) {
+          postInbox({ stage: st.name, type: "action", action: "abort" });
+        }
+      },
+    }, "✕ ABORT")) : null;
+
+  return el("section", { class: "chat-panel" },
+    el("div", { class: "chat-head" },
+      el("span", { class: `chat-live ${live ? "on" : "off"}` },
+        live ? "● agent listening" : "○ agent offline — messages will queue"),
+      awaiting ? el("span", { class: "chat-version" }, `v${st.artifact_version}`) : null),
+    el("div", { class: "chat-thread" }, ...thread.map(chatMessageRow)),
+    gateButtons,
+    composer);
+}
+
 const STAGE_ARTIFACTS = {
   research: ["research_brief"],
   proposal: ["proposal_packet"],
@@ -241,6 +316,7 @@ function renderDrawer(s) {
       st.timestamp ? el("span", { class: "meta", style: "font-family:var(--mono);font-size:calc(10.5px * var(--fs-scale));color:var(--text-3)" }, st.timestamp) : null,
       el("span", { class: "close", onclick: () => toggleDrawer(st.name) }, "CLOSE ✕"),
     ),
+    renderChatPanel(s, st),
     body,
   );
 }
@@ -249,6 +325,13 @@ function renderDrawer(s) {
 // script card
 // ---------------------------------------------------------------------------
 
+function editScriptLine(stageName, section) {
+  const next = prompt("Edit narration line:", section.text || "");
+  if (next === null || next.trim() === "" || next === section.text) return;
+  postInbox({ stage: stageName, type: "action", action: "edit_script_line",
+    line_id: section.id, new_text: next.trim() });
+}
+
 function scriptSections(script, limit) {
   const sections = script.sections || [];
   const shown = limit ? sections.slice(0, limit) : sections;
@@ -256,7 +339,10 @@ function scriptSections(script, limit) {
   for (const sec of shown) {
     nodes.push(el("div", { class: "sp-slug" },
       `${(sec.id || "").toUpperCase()} — ${sec.label || "Section"} `,
-      el("span", { class: "tc" }, `${fmtDuration(sec.start_seconds)} – ${fmtDuration(sec.end_seconds)}`)));
+      el("span", { class: "tc" }, `${fmtDuration(sec.start_seconds)} – ${fmtDuration(sec.end_seconds)}`),
+      el("button", { class: "line-edit", title: "Edit line", onclick: (e) => {
+        e.stopPropagation(); editScriptLine("script", sec);
+      } }, "✎")));
     if (sec.text) nodes.push(el("div", { class: "sp-action" }, sec.text));
     if (sec.speaker_directions) nodes.push(el("div", { class: "sp-paren" }, `(${sec.speaker_directions})`));
     const cues = sec.enhancement_cues || [];
@@ -523,6 +609,11 @@ function renderApprovalReview(s) {
         ? `Approval unlocks ${humanize(nextStage.name)}.`
         : "This is the final approval gate."),
       el("button", { type: "button", onclick: () => toggleDrawer(awaiting.name) }, "OPEN FULL ARTIFACT"),
+      el("button", { type: "button", class: "gate-proceed",
+        onclick: () => postInbox({ stage: awaiting.name, type: "action",
+          action: "approve",
+          artifact_version: s.stages[stageIndex].artifact_version }),
+      }, "✓ PROCEED AS RECOMMENDED"),
     ),
   );
 }
@@ -570,6 +661,39 @@ modal.addEventListener("click", (e) => { if (e.target === modal) closeModal(); }
 // right rail: decisions, activity
 // ---------------------------------------------------------------------------
 
+function decisionOverrideControl(entry, s) {
+  // Real decision_log schema (schemas/artifacts/decision_log.schema.json):
+  // options_considered entries carry option_id/label, not option/name.
+  // Accept whichever fields are actually present, preferring option_id
+  // (matches the format of `selected`) then falling back through the rest.
+  const options = (entry.options_considered || [])
+    .map((o) => {
+      if (typeof o === "string") return o;
+      if (!o) return "";
+      return o.option_id || o.label || o.option || o.name || "";
+    })
+    .filter(Boolean);
+  if (!options.length) return null;
+  return el("select", {
+    class: "decision-override",
+    onchange: (e) => {
+      const chosen = e.target.value;
+      if (!chosen || chosen === "__label") return;
+      if (confirm(`Change "${entry.subject}" to ${chosen}?`)) {
+        const awaiting = s && Array.isArray(s.stages)
+          ? (s.stages.find((x) => x.status === "awaiting_human") || {}).name
+          : null;
+        const stage = entry.stage || awaiting || "proposal";
+        postInbox({ stage, type: "action",
+          action: "override_decision", category: entry.category,
+          subject: entry.subject, chosen_option: chosen });
+      }
+      e.target.value = "__label";
+    },
+  }, el("option", { value: "__label" }, "change…"),
+     ...options.map((o) => el("option", { value: o }, o)));
+}
+
 function renderDecisions(s) {
   const log = s.artifacts.decision_log;
   const decisions = (log && log.decisions) || [];
@@ -596,7 +720,8 @@ function renderDecisions(s) {
     body.append(el("div", { class: "decision" },
       el("div", { class: "d-cat" }, `${d.category || "decision"}${d.confidence ? ` · ${d.confidence}` : ""}`,
         revised ? el("span", { class: "d-revised" }, " · revised") : null),
-      el("div", { class: "d-pick" }, `${d.subject || ""} `, el("span", { class: "arrow" }, "→"), ` ${selLabel}`),
+      el("div", { class: "d-pick" }, `${d.subject || ""} `, el("span", { class: "arrow" }, "→"), ` ${selLabel}`,
+        decisionOverrideControl(d, s)),
       d.reason ? el("div", { class: "d-why" }, d.reason) : null,
       alts.length ? el("div", { class: "d-alt" }, "also considered: ",
         alts.slice(0, 3).map((o, i) => [i ? " · " : "", el("s", {}, o.label || o.option_id)]).flat()) : null,
@@ -660,6 +785,47 @@ function renderActivity(s) {
 // ---------------------------------------------------------------------------
 // storyboard filmstrip
 // ---------------------------------------------------------------------------
+
+function sceneQuickActions(card) {
+  const stage = "assets";
+  return el("div", { class: "scene-actions" },
+    el("button", { title: "Note for this scene", onclick: () => {
+      const note = prompt(`Note for scene ${card.id}:`);
+      if (note) postInbox({ stage, type: "action", action: "scene_note",
+        scene_id: card.id, note });
+    }}, "🗒"),
+    el("button", { title: "Regenerate visual", onclick: () => {
+      const note = prompt("Optional guidance for the regeneration:") || undefined;
+      postInbox({ stage, type: "action", action: "regenerate_asset",
+        target: { scene_id: card.id, asset: "visual" }, note });
+    }}, "↺"),
+    el("button", { title: "Try a different provider", onclick: () => {
+      postInbox({ stage, type: "action", action: "swap_provider",
+        target: { scene_id: card.id, asset: "visual" } });
+    }}, "⇄"),
+    el("button", { title: "Drop this scene", onclick: () => {
+      if (confirm(`Drop scene ${card.id}?`))
+        postInbox({ stage: "scene_plan", type: "action", action: "drop_scene",
+          scene_id: card.id });
+    }}, "🗑"),
+    el("button", { title: "Replace with your own file", onclick: async () => {
+      const input = document.createElement("input");
+      input.type = "file";
+      input.onchange = async () => {
+        const file = input.files[0];
+        if (!file) return;
+        const form = new FormData();
+        form.append("file", file);
+        const res = await fetch(`/api/project/${encodedProjectId}/upload`,
+          { method: "POST", body: form });
+        if (!res.ok) { alert("Upload failed"); return; }
+        const { path } = await res.json();
+        postInbox({ stage, type: "action", action: "replace_asset",
+          target: { scene_id: card.id, asset: "visual" }, path });
+      };
+      input.click();
+    }}, "⤴"));
+}
 
 function sceneLabel(id) {
   // "sc4" → "SC 04", "scene-11" → "SC 11", anything else → uppercased id
@@ -797,6 +963,7 @@ function sceneCard(s, card) {
     };
     wrap.append(wave);
   }
+  wrap.append(sceneQuickActions(card));
   return wrap;
 }
 

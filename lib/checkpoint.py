@@ -460,7 +460,31 @@ def write_checkpoint(
         json.dump(checkpoint, f, indent=2)
     # Preserve run history: a superseded completed/awaiting_human checkpoint
     # is copied to history/ (stage versioning, gate audit trail, replay).
-    _archive_superseded_checkpoint(path, stage)
+    #
+    # Metadata-only rewrites (e.g. Step 5b's `metadata.inbox_cursor` refresh
+    # after each processed board/chat message while holding a live gate)
+    # must NOT count as a new version: they don't change status or artifacts,
+    # only bookkeeping. Archiving them would inflate the board's
+    # artifact_version (history count + 1, see backlot/state.py) on every
+    # answered chat question, breaking approve version-binding. Detect this
+    # by comparing the existing on-disk checkpoint's status/artifacts to the
+    # new ones; skip archiving only when both are identical. Status
+    # transitions, artifact changes, and the existing in_progress-refresh
+    # skip (inside _archive_superseded_checkpoint) are unaffected.
+    existing_for_diff: Optional[dict[str, Any]] = None
+    if path.exists():
+        try:
+            with open(path) as f:
+                existing_for_diff = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            existing_for_diff = None
+    metadata_only_rewrite = (
+        existing_for_diff is not None
+        and existing_for_diff.get("status") == status
+        and existing_for_diff.get("artifacts") == artifacts
+    )
+    if not metadata_only_rewrite:
+        _archive_superseded_checkpoint(path, stage)
     import os
     os.replace(tmp_path, path)
 

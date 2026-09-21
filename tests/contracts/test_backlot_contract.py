@@ -113,6 +113,43 @@ class TestCheckpointHistory:
         history_dir = tmp_path / "proj" / HISTORY_DIRNAME
         assert not history_dir.exists() or not list(history_dir.iterdir())
 
+    def test_metadata_only_rewrite_does_not_archive(self, tmp_path):
+        """Step 5b re-writes `metadata.inbox_cursor` after each processed
+        board/chat message while holding an awaiting_human gate. Same
+        status + same artifacts, only metadata differs — this must NOT
+        inflate the board's artifact_version (history count + 1)."""
+        write_checkpoint(
+            tmp_path, "proj", "script", "awaiting_human",
+            artifacts={"script": _minimal_script()},
+            pipeline_type="animated-explainer",
+            metadata={"inbox_cursor": {"id": "m-1", "ts": 1.0}},
+        )
+        history_dir = tmp_path / "proj" / HISTORY_DIRNAME
+
+        # Re-write with identical status + artifacts, only metadata changes
+        # (simulates answering a chat question while holding the gate).
+        write_checkpoint(
+            tmp_path, "proj", "script", "awaiting_human",
+            artifacts={"script": _minimal_script()},
+            pipeline_type="animated-explainer",
+            metadata={"inbox_cursor": {"id": "m-2", "ts": 2.0}},
+        )
+        assert not history_dir.exists() or not list(history_dir.iterdir())
+        current = read_checkpoint(tmp_path, "proj", "script")
+        assert current["metadata"]["inbox_cursor"]["id"] == "m-2"
+
+        # Re-write with changed artifacts — this DOES count as a new version.
+        revised_script = _minimal_script()
+        revised_script["title"] = "Revised Title"
+        write_checkpoint(
+            tmp_path, "proj", "script", "awaiting_human",
+            artifacts={"script": revised_script},
+            pipeline_type="animated-explainer",
+            metadata={"inbox_cursor": {"id": "m-3", "ts": 3.0}},
+        )
+        history = list(history_dir.glob("checkpoint_script_*.json"))
+        assert len(history) == 1
+
 
 class TestInitProject:
     def test_creates_layout_and_marker(self, tmp_path):

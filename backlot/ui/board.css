@@ -1040,3 +1040,26 @@ body:not(.first) .approval-review { animation: none; }
   .approval-review-foot button { width: 100%; }
   .approval-status { white-space: normal; }
 }
+
+/* ---- stage chat panel (interactive board) ---- */
+.chat-panel { border-top: 1px solid var(--line, #333); margin-top: 12px; padding-top: 10px; }
+.chat-head { display: flex; justify-content: space-between; font-size: 11px; opacity: .8; margin-bottom: 6px; }
+.chat-live.on { color: #7dd87d; }
+.chat-live.off { color: #999; }
+.chat-thread { max-height: 260px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
+.chat-msg { padding: 6px 8px; border-radius: 6px; font-size: 12.5px; line-height: 1.4; }
+.chat-agent { background: rgba(120, 140, 255, .12); align-self: flex-start; max-width: 92%; }
+.chat-you { background: rgba(120, 255, 160, .10); align-self: flex-end; max-width: 92%; }
+.chat-role { display: block; font-size: 9px; text-transform: uppercase; opacity: .5; margin-bottom: 2px; }
+.chat-gate-actions { display: flex; gap: 8px; margin: 10px 0 6px; }
+.gate-proceed { background: #2f7d46; color: #fff; border: 0; padding: 8px 12px; border-radius: 6px; cursor: pointer; font-weight: 600; }
+.gate-abort { background: transparent; color: #d66; border: 1px solid #d66; padding: 8px 12px; border-radius: 6px; cursor: pointer; }
+.chat-composer { display: flex; gap: 6px; margin-top: 8px; }
+.chat-composer input { flex: 1; background: rgba(255,255,255,.06); border: 1px solid var(--line, #333); border-radius: 6px; padding: 7px 9px; color: inherit; }
+.chat-composer button { border: 1px solid var(--line, #333); background: transparent; color: inherit; border-radius: 6px; padding: 7px 10px; cursor: pointer; }
+
+/* ---- quick-action controls (interactive board) ---- */
+.scene-actions { display: flex; gap: 4px; margin-top: 4px; }
+.scene-actions button, .line-edit { background: transparent; border: 1px solid var(--line, #333); border-radius: 4px; color: inherit; cursor: pointer; font-size: 11px; padding: 2px 6px; opacity: .7; }
+.scene-actions button:hover, .line-edit:hover { opacity: 1; }
+.decision-override { margin-left: 6px; font-size: 11px; background: transparent; color: inherit; border: 1px solid var(--line, #333); border-radius: 4px; }
