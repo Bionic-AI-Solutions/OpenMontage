@@ -6,7 +6,7 @@ OpenMontage tools that call the **in-cluster** gpu-ai stack for story/video prod
 
 | Tool | Capability | Backend |
 |------|------------|---------|
-| `gpu_ai_tts` | Multi-engine TTS (OmniVoice/Sarvam/ElevenLabs by voice) | `mcp-api-server` `/v1/audio/speech` |
+| `gpu_ai_tts` | Multi-engine TTS (gateway engines localclone/indian/eleven/local/openai, picked by voice) | `mcp-api-server` `/v1/audio/speech` |
 | `gpu_ai_stt` | Speech-to-text | `mcp-api-server` `/v1/audio/transcriptions` |
 | `gpu_ai_music` | ACE-Step instrumental beds | `mcp-api-server` `/v1/audio/music` |
 | `genimage` | FLUX generate / edit / upscale / remove_bg | GenImage MCP (ComfyUI) |
@@ -22,7 +22,7 @@ OpenMontage tools that call the **in-cluster** gpu-ai stack for story/video prod
 ## Agent selection guidance
 
 - **Stills for explainers:** prefer `genimage` (`operation=generate`) over paid OpenAI when ComfyUI is healthy.
-- **Narration:** prefer `gpu_ai_tts` with `voice=aditya` (OmniVoice via gateway); fallback `omnivoice_tts` / `sarvam_tts`.
+- **Narration:** prefer `gpu_ai_tts` with `voice=aditya` (localclone engine via gateway); fallback `omnivoice_tts` / `sarvam_tts`.
 - **Captions:** `gpu_ai_stt` on the final narration mix.
 - **Music:** `gpu_ai_music` with style tags; fallback `pixabay_music`.
 - **Source footage:** `media_services` with `service=scenes|diarize|separate|animate` and a reachable `url`.

@@ -48,6 +48,25 @@ def test_gpu_ai_tts_writes_audio(monkeypatch, tmp_path):
     assert out.read_bytes() == wav
 
 
+def test_gpu_ai_tts_reports_the_gateways_public_engine_name(monkeypatch, tmp_path):
+    """The gateway answers with X-TTS-Engine-Used in its generic vocabulary
+    (localclone, indian, ...); the tool surfaces it verbatim."""
+    wav = b"RIFF" + b"\x00" * 1200
+
+    def fake_post_json(url, payload, timeout=180):
+        assert payload["model"] == "localclone"
+        return _Resp(wav, headers={"X-TTS-Engine-Used": "localclone"})
+
+    monkeypatch.setenv("GPU_AI_BASE_URL", "http://gpu-ai.test")
+    monkeypatch.setattr(client, "post_json", fake_post_json)
+    monkeypatch.setattr("tools.analysis.audio_probe.probe_duration", lambda p: 1.0)
+
+    result = GpuAiTTS().execute({"text": "Hi", "model": "localclone",
+                                 "output_path": str(tmp_path / "e.wav")})
+    assert result.success is True
+    assert result.data["engine"] == "localclone"
+
+
 def test_gpu_ai_tts_accepts_voice_id(monkeypatch, tmp_path):
     wav = b"RIFF" + b"\x00" * 1200
 
