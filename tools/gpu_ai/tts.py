@@ -1,7 +1,9 @@
 """gpu-ai multi-engine TTS via mcp-api-server ``/v1/audio/speech``.
 
-Routes to OmniVoice / Sarvam / ElevenLabs (and others) by voice name through
-the gateway registry. Prefer this over calling OmniVoice directly when the
+Routes by voice name through the gateway registry. The gateway names its
+engines generically (localclone, indian, eleven, local, openai, legacy1,
+legacy2); `model` may be one of those to pin an engine, or `tts-1` to let the
+voice decide. Prefer this over calling an engine directly when the
 NetworkPolicy allows openmontage → mcp-api-server.
 """
 
@@ -57,7 +59,7 @@ class GpuAiTTS(BaseTool):
         "multi_engine": True,
     }
     best_for = [
-        "cluster narration via OmniVoice/Sarvam/ElevenLabs registry",
+        "cluster narration via the gateway's localclone/indian/eleven engines",
         "voice selection across engines with one tool",
     ]
 
@@ -76,7 +78,12 @@ class GpuAiTTS(BaseTool):
                 "description": "Alias for voice (accepted from tts_selector).",
             },
             "language": {"type": "string", "default": "en"},
-            "model": {"type": "string", "default": "tts-1"},
+            "model": {
+                "type": "string",
+                "default": "tts-1",
+                "description": "tts-1 (voice picks the engine) or a gateway engine "
+                "name: localclone, indian, eleven, local, openai.",
+            },
             "response_format": {
                 "type": "string",
                 "default": "wav",
@@ -150,6 +157,9 @@ class GpuAiTTS(BaseTool):
                 data={
                     "provider": "gpu_ai",
                     "voice": voice,
+                    # The gateway's public name for the engine that answered
+                    # (absent on a streamed reply).
+                    "engine": result.headers.get("x-tts-engine-used"),
                     "format": fmt,
                     "text_length": len(text),
                     "audio_duration_seconds": round(duration, 2) if duration else None,

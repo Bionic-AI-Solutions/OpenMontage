@@ -13,7 +13,7 @@ among in-cluster audio / image / footage APIs.
 
 | Tool | Capability | Endpoint |
 |------|------------|----------|
-| `gpu_ai_tts` | Multi-engine TTS (OmniVoice/Sarvam/ElevenLabs by voice) | `GPU_AI_BASE_URL/v1/audio/speech` |
+| `gpu_ai_tts` | Multi-engine TTS (gateway engines localclone/indian/eleven/local/openai, picked by voice) | `GPU_AI_BASE_URL/v1/audio/speech` |
 | `gpu_ai_stt` | faster-whisper transcription | `/v1/audio/transcriptions` |
 | `gpu_ai_music` | ACE-Step instrumental beds | `/v1/audio/music` |
 | `genimage` | FLUX generate/edit/upscale/remove_bg | GenImage MCP |
