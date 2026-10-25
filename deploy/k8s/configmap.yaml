@@ -1,0 +1,27 @@
+# Non-secret runtime config for OpenMontage. Applied with: kubectl apply -f deploy/k8s/
+# Secrets come only from the ExternalSecret next to this file (ESO -> openmontage-secrets);
+# VAULT_SKIP_LOAD=true turns off the app-side Vault read (lib/vault_config.py), which needed a
+# static VAULT_TOKEN and has been timing out in-cluster.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: openmontage-config
+  namespace: openmontage
+  labels:
+    app.kubernetes.io/name: openmontage
+data:
+  BACKLOT_ALLOWED_ORIGINS: "https://om.baisoln.com"
+  BACKLOT_HOST: "0.0.0.0"
+  BACKLOT_PORT: "4750"
+  COMFYUI_SERVER_URL: "http://comfyui.comfyui.svc.cluster.local:8188"
+  GENIMAGE_MCP_URL: "http://mcp-genimage-server.mcp.svc.cluster.local:8008/mcp"
+  GENIMAGE_TENANT_ID: "base"
+  GPU_AI_BASE_URL: "http://mcp-api-server.ai-services.svc.cluster.local:8000"
+  MEDIA_ANIMATE_URL: "http://animate-api.media-services.svc.cluster.local:8000"
+  MEDIA_DIARIZE_URL: "http://diarize-api.media-services.svc.cluster.local:8000"
+  MEDIA_SCENES_URL: "http://scenes-api.media-services.svc.cluster.local:8000"
+  MEDIA_SEPARATE_URL: "http://separate-api.media-services.svc.cluster.local:8000"
+  OMNIVOICE_BASE_URL: "http://omnivoice-api.ai-services.svc.cluster.local:7861"
+  OMNIVOICE_DEFAULT_VOICE_ID: "c32af141013d"
+  OPENMONTAGE_PROJECTS_DIR: "/app/projects"
+  VAULT_SKIP_LOAD: "true"
