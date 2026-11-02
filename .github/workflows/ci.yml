@@ -18,7 +18,7 @@ concurrency:
 jobs:
   validate:
     name: Validate Python
-    runs-on: ubuntu-latest
+    runs-on: k3s-bionic
 
     steps:
       - name: Checkout repository
@@ -34,7 +34,7 @@ jobs:
             requirements-dev.txt
 
       - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg make
 
       - name: Install dependencies
         run: make install-dev
